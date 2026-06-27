@@ -112,12 +112,16 @@ async function render() {
   }
 
   if (s.playerCount < 2) {
+    const sig = "lobby:" + s.players.join(",");
+    if (sig === lastSig) return; lastSig = sig;
     h('<div class="card center"><div class="spin"></div><div>Waiting for a second player…</div>' +
       '<div class="muted" style="margin-top:8px">' + s.players.map((p) => '<span class="pill">' + esc(p) + "</span>").join("") + "</div></div>");
     return;
   }
 
   if (!s.session.base_image_id) {
+    if (lastSig === "upload") return;   // don't rebuild & wipe the file input
+    lastSig = "upload";
     h('<div class="card"><label>Start with a photo of the space</label>' +
       '<input id="file" type="file" accept="image/*" style="margin-bottom:6px" />' +
       '<button id="upb">Upload photo</button><div class="err" id="ue"></div></div>' +
@@ -137,6 +141,8 @@ async function render() {
   }
 
   if (s.turn && s.turn.status === "generating") {
+    const sig = "gen:" + s.turn.id;
+    if (sig === lastSig) return; lastSig = sig;
     h('<div class="card center"><div class="spin"></div><div>Designing 3 options…</div>' +
       '<div class="muted" style="margin-top:8px">' + esc(s.turn.instruction_clean || s.turn.instruction_raw) + "</div></div>");
     return;

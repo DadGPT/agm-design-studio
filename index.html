@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<title>AGM Design Studio</title>
+<style>
+  :root { --bg:#151520; --card:#1d1d2b; --line:#2a2a40; --pink:#F857A6; --muted:#9999b0; --text:#f2f2f7; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--text); min-height:100dvh; }
+  .wrap { max-width:520px; margin:0 auto; padding:20px 18px 40px; }
+  h1 { font-size:20px; letter-spacing:.3px; margin:6px 0 2px; }
+  .sub { color:var(--muted); font-size:13px; margin-bottom:18px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:18px; margin-bottom:14px; }
+  label { display:block; font-size:13px; color:var(--muted); margin-bottom:6px; }
+  input[type=text] { width:100%; padding:14px; border-radius:12px; border:1px solid var(--line); background:#12121b; color:var(--text); font-size:16px; }
+  button { width:100%; padding:15px; border:0; border-radius:12px; font-size:16px; font-weight:600; background:var(--pink); color:#fff; margin-top:12px; }
+  button.secondary { background:#2a2a40; color:var(--text); }
+  button:disabled { opacity:.5; }
+  .mic { display:flex; gap:10px; }
+  .mic button { margin-top:0; }
+  .mic .micbtn { width:64px; flex:0 0 64px; background:#2a2a40; font-size:22px; }
+  .mic .micbtn.live { background:var(--pink); animation:pulse 1s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.6} }
+  .pill { display:inline-block; background:#2a2a40; color:var(--text); border-radius:999px; padding:5px 12px; font-size:13px; margin:4px 6px 0 0; }
+  .opts { display:grid; gap:12px; }
+  .opt { border:2px solid var(--line); border-radius:14px; overflow:hidden; background:#12121b; }
+  .opt img { width:100%; display:block; aspect-ratio:1; object-fit:cover; }
+  .opt .lab { padding:10px 12px; font-size:14px; font-weight:600; }
+  .opt:active { border-color:var(--pink); }
+  .hero { width:100%; border-radius:12px; aspect-ratio:1; object-fit:cover; border:1px solid var(--line); }
+  .center { text-align:center; }
+  .spin { width:38px; height:38px; border:4px solid var(--line); border-top-color:var(--pink); border-radius:50%; margin:18px auto; animation:rot 1s linear infinite; }
+  @keyframes rot { to { transform:rotate(360deg) } }
+  .err { color:#ff7b9c; font-size:13px; margin-top:8px; }
+  .muted { color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>AGM Design Studio</h1>
+  <div class="sub" id="sub">Shared interior-design studio</div>
+  <div id="app"></div>
+</div>
+<script type="module">
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+const SB_URL = "https://ououlxiptshjqnigzuav.supabase.co";
+const ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im91b3VseGlwdHNoanFuaWd6dWF2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI2MDA4OTgsImV4cCI6MjA5ODE3Njg5OH0.909ezrkcAmDnbRKlYwqotfJmQc2c90-jlQsiZgbUc7o";
+const sb = createClient(SB_URL, ANON);
+const sid = new URLSearchParams(location.search).get("s");
+const LSKEY = "rda:" + sid;
+let me = JSON.parse(localStorage.getItem(LSKEY) || "null");
+let busy = false, lastSig = "", recog = null, recognizing = false;
+const app = document.getElementById("app");
+const pub = (p) => SB_URL + "/storage/v1/object/public/session-images/" + p;
+
+async function callFn(name, body) {
+  const r = await fetch(SB_URL + "/functions/v1/" + name, {
+    method: "POST",
+    headers: { Authorization: "Bearer " + ANON, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return r.json();
+}
+
+async function load() {
+  if (!sid) return { error: "Missing session in link." };
+  const { data: session } = await sb.from("sessions").select("*").eq("id", sid).maybeSingle();
+  if (!session) return { error: "Session not found." };
+  const { data: players } = await sb.from("players").select("display_name").eq("session_id", sid).order("joined_at");
+  let baseUrl = null;
+  if (session.base_image_id) {
+    const { data: bi } = await sb.from("images").select("storage_path").eq("id", session.base_image_id).maybeSingle();
+    if (bi) baseUrl = pub(bi.storage_path);
+  }
+  const { data: turn } = await sb.from("turns").select("*").eq("session_id", sid).order("created_at", { ascending: false }).limit(1).maybeSingle();
+  let options = [];
+  if (turn && turn.status === "ready") {
+    const { data: opts } = await sb.from("turn_options").select("*").eq("turn_id", turn.id).order("variant_index");
+    for (const o of opts || []) {
+      const { data: img } = await sb.from("images").select("storage_path").eq("id", o.image_id).maybeSingle();
+      options.push({ ...o, url: img ? pub(img.storage_path) : null });
+    }
+  }
+  return { session, players: players || [], playerCount: (players || []).length, baseUrl, turn, options };
+}
+
+function h(html) { app.innerHTML = html; }
+const esc = (s) => (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+async function render() {
+  if (busy) return;
+  const s = await load();
+  document.getElementById("sub").textContent = me ? ("You're in as " + me.displayName) : "Shared interior-design studio";
+  if (s.error) { h('<div class="card err">' + esc(s.error) + "</div>"); return; }
+
+  if (!me) {
+    const sig = "join:" + s.playerCount;
+    if (sig === lastSig) return; lastSig = sig;
+    h('<div class="card"><label>Your name</label><input id="nm" type="text" placeholder="e.g. Jesse" maxlength="24" />' +
+      '<button id="joinb">Join the studio</button>' +
+      '<div class="muted" style="margin-top:10px">' + s.playerCount + " player(s) here</div></div>");
+    document.getElementById("joinb").onclick = async () => {
+      const name = document.getElementById("nm").value.trim() || "Player";
+      busy = true;
+      const r = await callFn("join", { sessionId: sid, displayName: name });
+      busy = false;
+      if (r.clientToken) { me = r; localStorage.setItem(LSKEY, JSON.stringify(me)); lastSig = ""; render(); }
+      else alert(r.error || "Join failed");
+    };
+    return;
+  }
+
+  if (s.playerCount < 2) {
+    h('<div class="card center"><div class="spin"></div><div>Waiting for a second player…</div>' +
+      '<div class="muted" style="margin-top:8px">' + s.players.map((p) => '<span class="pill">' + esc(p) + "</span>").join("") + "</div></div>");
+    return;
+  }
+
+  if (!s.session.base_image_id) {
+    h('<div class="card"><label>Start with a photo of the space</label>' +
+      '<input id="file" type="file" accept="image/*" capture="environment" style="margin-bottom:6px" />' +
+      '<button id="upb">Upload photo</button><div class="err" id="ue"></div></div>' +
+      '<div class="muted center">Anyone can upload the starting photo.</div>');
+    document.getElementById("upb").onclick = async () => {
+      const f = document.getElementById("file").files[0];
+      if (!f) { document.getElementById("ue").textContent = "Pick a photo first."; return; }
+      busy = true; document.getElementById("upb").textContent = "Uploading…"; document.getElementById("upb").disabled = true;
+      const fd = new FormData();
+      fd.append("sessionId", sid); fd.append("clientToken", me.clientToken); fd.append("file", f);
+      const r = await fetch(SB_URL + "/functions/v1/upload", { method: "POST", headers: { Authorization: "Bearer " + ANON }, body: fd }).then((x) => x.json());
+      busy = false; lastSig = "";
+      if (r.error) { document.getElementById("ue").textContent = r.error; document.getElementById("upb").textContent = "Upload photo"; document.getElementById("upb").disabled = false; }
+      else render();
+    };
+    return;
+  }
+
+  if (s.turn && s.turn.status === "generating") {
+    h('<div class="card center"><div class="spin"></div><div>Designing 3 options…</div>' +
+      '<div class="muted" style="margin-top:8px">' + esc(s.turn.instruction_clean || s.turn.instruction_raw) + "</div></div>");
+    return;
+  }
+
+  if (s.turn && s.turn.status === "ready" && s.options.length) {
+    const sig = "ready:" + s.turn.id;
+    if (sig === lastSig) return; lastSig = sig;
+    h('<div class="card"><div style="margin-bottom:10px">Pick one to keep — either of you can choose:</div>' +
+      '<div class="opts">' + s.options.map((o) =>
+        '<div class="opt" data-opt="' + o.id + '"><img src="' + o.url + '" /><div class="lab">' + esc(o.label || "Option") + "</div></div>"
+      ).join("") + "</div></div>");
+    app.querySelectorAll(".opt").forEach((el) => {
+      el.onclick = async () => {
+        if (busy) return; busy = true; el.style.borderColor = "var(--pink)";
+        await callFn("choose", { sessionId: sid, clientToken: me.clientToken, turnId: s.turn.id, optionId: el.dataset.opt });
+        busy = false; lastSig = ""; render();
+      };
+    });
+    return;
+  }
+
+  const sig = "idle:" + s.session.base_image_id;
+  if (sig === lastSig) return; lastSig = sig;
+  const sr = ("webkitSpeechRecognition" in window) || ("SpeechRecognition" in window);
+  h('<img class="hero" src="' + s.baseUrl + '" />' +
+    '<div class="card"><label>How would you like to change this?</label>' +
+    '<div class="mic"><input id="ins" type="text" placeholder="e.g. add navy shutters" />' +
+    (sr ? '<button class="micbtn" id="mic">🎤</button>' : "") + "</div>" +
+    '<button id="go">Generate 3 options</button><div class="err" id="ie"></div></div>');
+  document.getElementById("go").onclick = async () => {
+    const t = document.getElementById("ins").value.trim();
+    if (!t) { document.getElementById("ie").textContent = "Say or type a change."; return; }
+    busy = true; lastSig = "";
+    const r = await callFn("instruct", { sessionId: sid, clientToken: me.clientToken, instructionRaw: t });
+    busy = false;
+    if (r.error) { document.getElementById("ie").textContent = r.error; }
+    render();
+  };
+  if (sr) {
+    const micBtn = document.getElementById("mic");
+    micBtn.onclick = () => {
+      if (recognizing) { recog && recog.stop(); return; }
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      recog = new SR(); recog.lang = "en-US"; recog.interimResults = true; recog.continuous = false;
+      recognizing = true; micBtn.classList.add("live");
+      let finalText = "";
+      recog.onresult = (e) => {
+        let interim = "";
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const tr = e.results[i][0].transcript;
+          if (e.results[i].isFinal) finalText += tr; else interim += tr;
+        }
+        document.getElementById("ins").value = (finalText + interim).trim();
+      };
+      recog.onerror = () => { recognizing = false; micBtn.classList.remove("live"); };
+      recog.onend = () => { recognizing = false; micBtn.classList.remove("live"); };
+      recog.start();
+    };
+  }
+}
+
+if (!sid) { h('<div class="card err">This link is missing its session code. Scan the QR on the TV again.</div>'); }
+else { render(); setInterval(render, 2500); }
+</script>
+</body>
+</html>

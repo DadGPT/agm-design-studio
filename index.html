@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
-<title>AGM Design Studio</title>
+<title>Home Design Helper</title>
 <style>
   :root { --bg:#151520; --card:#1d1d2b; --line:#2a2a40; --pink:#F857A6; --muted:#9999b0; --text:#f2f2f7; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
@@ -38,7 +38,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>AGM Design Studio</h1>
+  <h1>Home Design Helper</h1>
   <div class="sub" id="sub">Shared interior-design studio</div>
   <div id="app"></div>
 </div>
@@ -51,6 +51,7 @@ const sid = new URLSearchParams(location.search).get("s");
 const LSKEY = "rda:" + sid;
 let me = JSON.parse(localStorage.getItem(LSKEY) || "null");
 let busy = false, lastSig = "", recog = null, recognizing = false;
+let pendingGenUntil = 0;   // optimistic "generating" window after tapping Generate
 const app = document.getElementById("app");
 const pub = (p) => SB_URL + "/storage/v1/object/public/session-images/" + p;
 
@@ -93,6 +94,17 @@ async function render() {
   const s = await load();
   document.getElementById("sub").textContent = me ? ("You're in as " + me.displayName) : "Shared interior-design studio";
   if (s.error) { h('<div class="card err">' + esc(s.error) + "</div>"); return; }
+
+  // Hold the optimistic "generating" screen until the server's new turn appears,
+  // so tapping Generate gives instant feedback (and doesn't flash back to idle).
+  if (pendingGenUntil > Date.now()) {
+    const t = s.turn;
+    if (t && (t.status === "generating" || t.status === "ready")) {
+      pendingGenUntil = 0;   // server caught up — render the real state below
+    } else {
+      return;                // keep showing the optimistic generating screen
+    }
+  }
 
   if (!me) {
     const sig = "join:" + s.playerCount;
@@ -173,14 +185,16 @@ async function render() {
     '<div class="mic"><input id="ins" type="text" placeholder="e.g. add navy shutters" />' +
     (sr ? '<button class="micbtn" id="mic">🎤</button>' : "") + "</div>" +
     '<button id="go">Generate 3 options</button><div class="err" id="ie"></div></div>');
-  document.getElementById("go").onclick = async () => {
+  document.getElementById("go").onclick = () => {
     const t = document.getElementById("ins").value.trim();
     if (!t) { document.getElementById("ie").textContent = "Say or type a change."; return; }
-    busy = true; lastSig = "";
-    const r = await callFn("instruct", { sessionId: sid, clientToken: me.clientToken, instructionRaw: t });
-    busy = false;
-    if (r.error) { document.getElementById("ie").textContent = r.error; }
-    render();
+    // Optimistic: show generating instantly; don't block on the ~30s request.
+    pendingGenUntil = Date.now() + 25000;
+    lastSig = "optgen";
+    h('<div class="card center"><div class="spin"></div><div>Designing 3 options…</div>' +
+      '<div class="muted" style="margin-top:8px">' + esc(t) + "</div></div>");
+    callFn("instruct", { sessionId: sid, clientToken: me.clientToken, instructionRaw: t })
+      .then((r) => { if (r && r.error) { pendingGenUntil = 0; lastSig = ""; alert(r.error); render(); } });
   };
   if (sr) {
     const micBtn = document.getElementById("mic");
@@ -206,7 +220,7 @@ async function render() {
 }
 
 if (!sid) { h('<div class="card err">This link is missing its session code. Scan the QR on the TV again.</div>'); }
-else { render(); setInterval(render, 2500); }
+else { render(); setInterval(render, 1500); }
 </script>
 </body>
 </html>
